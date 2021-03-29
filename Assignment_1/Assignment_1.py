@@ -1,80 +1,68 @@
 import numpy as np
 import pydicom
 import matplotlib.pyplot as plt
-from skimage import measure
+from skimage.filters import threshold_local, threshold_otsu
 import os
 import pdb
+from skimage import measure
 
+import pydicom
+import numpy as np
+import matplotlib.pyplot as plt
+import sys
+import glob
 
-def get_hu(pic):
-    pixel_value = np.clip(pic.pixel_array, 0, 255)
-    rescale_intercept = pic[0x0028, 0x1052].value
-    rescale_slope = pic[0x0028, 0x1053].value
-    hounsfield_units = (rescale_slope * pixel_value) + rescale_intercept
-    nor_hu = normalize_hu(hounsfield_units)
+# load the DICOM files
+files = []
+print('glob: {}'.format(sys.argv[1]))
+for fname in glob.glob(sys.argv[1], recursive=False):
+    print("loading: {}".format(fname))
+    files.append(pydicom.dcmread(fname))
 
-    return nor_hu
+print("file count: {}".format(len(files)))
 
-def normalize_hu(hounsfield_units):
-    nor_hu = np.array([(x+1024) / 4096 for x in hounsfield_units])
+# skip files with no SliceLocation (eg scout views)
+slices = []
+skipcount = 0
+for f in files:
+    if hasattr(f, 'SliceLocation'):
+        slices.append(f)
+    else:
+        skipcount = skipcount + 1
 
-    return np.float32(nor_hu)
+print("skipped, no SliceLocation: {}".format(skipcount))
 
-datadir = './CT_chest_scans'
+# ensure they are in the correct order
+slices = sorted(slices, key=lambda s: s.SliceLocation)
 
-folders = os.listdir(datadir)
-for folder in folders:
-    imagedir = os.path.join(datadir, folder)
-    images = os.listdir(imagedir)
-    data = {}
-    for image in images:
-        image_path = os.path.join(imagedir, image)
-        pic = pydicom.dcmread(image_path)
-        hounsfield_units = get_hu(pic)
-        pdb.set_trace()
-        data[pic.InstanceNumber] = hounsfield_units
-    volume = []
-    for ins in sorted(data):
-        volume.append(data[ins])
-    fig=plt.figure(figsize=(8, 8))
-    columns = 5
-    rows = 5
+# pixel aspects, assuming all slices are the same
+ps = slices[0].PixelSpacing
+ss = slices[0].SliceThickness
+ax_aspect = ps[1]/ps[0]
+sag_aspect = ps[1]/ss
+cor_aspect = ss/ps[0]
 
-    for i in range(5): ## load the data from 9 classes
-        # a = list(np.where(labels == i))[0]
-        for j in range(5): ## each 5 pictures for every 9 classes
-            fig.add_subplot(rows, columns, i * 5 + j + 1)
-            plt.imshow(volume[i * 5 + j])
-            plt.axis('off')
-    plt.savefig('result1.png', cmap=plt.cm.bone)
-    pdb.set_trace()
-        
-pdb.set_trace()
+# create 3D array
+img_shape = list(slices[0].pixel_array.shape)
+img_shape.append(len(slices))
+img3d = np.zeros(img_shape)
 
+# fill 3D array with the images from the files
+for i, s in enumerate(slices):
+    img2d = s.pixel_array
+    img3d[:, :, i] = img2d
 
-# def get_hu(pic):
-#     pixel_value = np.clip(pic.pixel_array, 0, 255)
-#     rescale_intercept = pic[0x0028, 0x1052].value
-#     rescale_slope = pic[0x0028, 0x1053].value
-#     hounsfield_units = (rescale_slope * pixel_value) + rescale_intercept
-#     nor_hu = normalize_hu(hounsfield_units)
+# plot 3 orthogonal slices
+a1 = plt.subplot(2, 2, 1)
+plt.imshow(img3d[:, :, img_shape[2]//2])
+a1.set_aspect(ax_aspect)
 
-#     return nor_hu
+a2 = plt.subplot(2, 2, 2)
+plt.imshow(img3d[:, img_shape[1]//2, :])
+a2.set_aspect(sag_aspect)
 
-# def normalize_hu(hounsfield_units):
-#     nor_hu = np.array([(x+1024) / 4096 for x in hounsfield_units])
+a3 = plt.subplot(2, 2, 3)
+plt.imshow(img3d[img_shape[0]//2, :, :].T)
+a3.set_aspect(cor_aspect)
 
-#     return nor_hu
-
-# datadir = './CT_chest_scans'
-# ct_hounsfield = []
-# folders = os.listdir(datadir)
-# for folder in folders:
-#     imagedir = os.path.join(datadir, folder)
-#     images = os.listdir(imagedir)
-#     for image in images:
-#         image_path = os.path.join(imagedir, image)
-#         pic = pydicom.dcmread(image_path)
-#         hounsfield_units = get_hu(pic)
-#         ct_hounsfield.append(hounsfield_units)
-# pdb.set_trace()
+plt.show()
